@@ -35,7 +35,7 @@ export async function runWorkflow(projectInput, options = {}, onUpdate = () => {
   const id = `${new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15)}-${randomUUID().slice(0, 8)}`;
   const runDir = path.join(dataDir(project), 'runs', id);
   fs.mkdirSync(runDir, { recursive: true });
-  const record = { schemaVersion: 1, id, startedAt: now(), finishedAt: null, status: 'running', phase: 'starting', agents: [], tests: [], artifacts: [], coverage: { lines: null, branches: null, functions: null, rules: null, cases: null }, summary: '' };
+  const record = { schemaVersion: 1, id, processId: process.pid, startedAt: now(), finishedAt: null, status: 'running', phase: 'starting', agents: [], tests: [], artifacts: [], coverage: { lines: null, branches: null, functions: null, rules: null, cases: null }, summary: '' };
   const save = () => { writeJson(path.join(runDir, 'run.json'), record); onUpdate(record); };
   save();
   try {
@@ -46,11 +46,13 @@ export async function runWorkflow(projectInput, options = {}, onUpdate = () => {
       const log = path.join(runDir, `${phase}.log`);
       const step = { phase, name, status: 'running', log: path.relative(project, log) };
       record.agents.push(step);
+      record.artifacts.push({ kind: 'log', path: step.log });
       save();
-      const result = await runAgent(name, project, agentPrompt(project, phase), log);
+      const result = await runAgent(name, project, agentPrompt(project, phase), log, options.agentTimeoutMs);
       step.status = result.status;
       step.exitCode = result.code;
       save();
+      if (result.timedOut) throw new Error(`${name} ${phase} timed out after 20 minutes. See ${step.log}`);
       if (result.code !== 0) throw new Error(`${name} ${phase} failed. See ${step.log}`);
       const errors = validateContext(project, phase);
       if (errors.length) throw new Error(`${name} ${phase} left invalid Maria data: ${errors.join('; ')}`);

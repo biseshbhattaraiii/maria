@@ -12,6 +12,13 @@ import { initialize } from './setup.js';
 
 const staticRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dashboard');
 const running = new Map();
+function isProjectRunning(project) {
+  if (running.has(project)) return true;
+  const latest = listRuns(project)[0];
+  if (latest?.status !== 'running' || !latest.processId) return false;
+  try { process.kill(latest.processId, 0); return true; }
+  catch { return false; }
+}
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.log': 'text/plain; charset=utf-8' };
 
 function send(res, status, value) {
@@ -62,7 +69,7 @@ async function handler(req, res) {
       if (url.pathname === '/api/projects') return send(res, 200, initialize(input.path));
       if (url.pathname === '/api/runs') {
         const project = configuredProject(input.project);
-        if (running.has(project)) return send(res, 409, { error: 'A run is already in progress' });
+        if (isProjectRunning(project)) return send(res, 409, { error: 'A run is already in progress' });
         selectAgents(input.agent || 'auto');
         const promise = runWorkflow(project, { agent: input.agent || 'auto' }).catch(error => console.error(`Maria run failed: ${error.message}`));
         running.set(project, promise);
@@ -72,12 +79,12 @@ async function handler(req, res) {
       return send(res, 404, { error: 'Unknown endpoint' });
     }
     if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
-    if (url.pathname === '/api/meta') return send(res, 200, { agents: availableAgents(), home: os.homedir(), version: '0.1.0' });
+    if (url.pathname === '/api/meta') return send(res, 200, { agents: availableAgents(), home: os.homedir(), version: '0.1.1' });
     if (url.pathname === '/api/projects') return send(res, 200, projectCatalog().projects.map(project => ({ path: project, exists: fs.existsSync(path.join(project, '.maria', 'project.json')) })));
     if (url.pathname === '/api/browse') return send(res, 200, browse(url.searchParams.get('path')));
     if (url.pathname === '/api/project') {
       const project = configuredProject(url.searchParams.get('path'));
-      return send(res, 200, { root: project, ...readProjectData(project), runs: listRuns(project), running: running.has(project) });
+      return send(res, 200, { root: project, ...readProjectData(project), runs: listRuns(project), running: isProjectRunning(project) });
     }
     if (url.pathname === '/api/files') return send(res, 200, fileTree(configuredProject(url.searchParams.get('project')), url.searchParams.get('path') || ''));
     if (url.pathname === '/api/artifact') {

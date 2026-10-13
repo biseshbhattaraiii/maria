@@ -33,18 +33,25 @@ export function agentPrompt(project, phase) {
   return `${shared}\nRead .maria/handoff.json, verify the discovery output, implement the highest-priority test cases using an appropriate existing framework, and update .maria/cases.json with actual test paths and names. Configure .maria/runner.json with a repeatable command and machine-readable report path; configure failure screenshots where supported. Write a new .maria/handoff.json summarizing what runs and anything blocked. Maria will run the configured test command after you finish.`;
 }
 
-export async function runAgent(name, project, prompt, logFile) {
+export async function runAgent(name, project, prompt, logFile, timeoutMs = 20 * 60 * 1000) {
   const bin = commands[name]();
   const args = name === 'codex' ? ['exec', '--approve-for-me', '-C', project, '-'] : ['-p', '--permission-mode', 'acceptEdits'];
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   const log = fs.createWriteStream(logFile);
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { cwd: project, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
-    const timer = setTimeout(() => child.kill('SIGTERM'), 20 * 60 * 1000);
+    let timedOut = false;
+    let forceTimer;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+      forceTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
+    }, timeoutMs);
+    const cleanup = () => { clearTimeout(timer); clearTimeout(forceTimer); log.end(); };
     child.stdout.pipe(log, { end: false });
     child.stderr.pipe(log, { end: false });
     child.stdin.end(prompt);
-    child.once('error', error => { clearTimeout(timer); log.end(); reject(error); });
-    child.once('close', code => { clearTimeout(timer); log.end(); resolve({ code, status: code === 0 ? 'completed' : 'failed' }); });
+    child.once('error', error => { cleanup(); reject(error); });
+    child.once('close', code => { cleanup(); resolve({ code, timedOut, status: code === 0 ? 'completed' : 'failed' }); });
   });
 }

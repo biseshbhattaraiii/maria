@@ -53,6 +53,7 @@ fs.writeFileSync(path.join(dir,'handoff.json'),JSON.stringify({schemaVersion:1,p
     assert.equal(run.coverage.lines, 80);
     assert.equal(run.coverage.rules, 100);
     assert.ok(run.artifacts.some(item => item.kind === 'screenshot'));
+    assert.ok(run.artifacts.some(item => item.path.endsWith('discovery.log')));
     assert.ok(run.artifacts.every(item => fs.existsSync(path.join(project, item.path))));
     assert.equal(readJson(path.join(project, '.maria', 'handoff.json')).agent, 'codex');
   } finally {
@@ -84,6 +85,12 @@ test('local API exposes project data and rejects cross-origin mutations', async 
     assert.match(await page.text(), /Testing command center/);
     const data = await fetch(`${base}/api/project?path=${encodeURIComponent(project)}`).then(response => response.json());
     assert.equal(data.project.root, project);
+    const runDir = path.join(project, '.maria', 'runs', 'active-run');
+    writeJson(path.join(runDir, 'run.json'), { id: 'active-run', startedAt: new Date().toISOString(), status: 'running', processId: process.pid, agents: [], artifacts: [], tests: [], coverage: {} });
+    const active = await fetch(`${base}/api/project?path=${encodeURIComponent(project)}`).then(response => response.json());
+    assert.equal(active.running, true);
+    const duplicate = await fetch(`${base}/api/runs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ project, agent: 'none' }) });
+    assert.equal(duplicate.status, 409);
     const response = await fetch(`${base}/api/projects`, { method: 'POST', headers: { origin: 'https://untrusted.example', 'content-type': 'application/json' }, body: JSON.stringify({ path: root }) });
     assert.equal(response.status, 403);
   } finally { server.close(); fs.rmSync(root, { recursive: true, force: true }); }

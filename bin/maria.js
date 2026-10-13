@@ -19,11 +19,11 @@ try {
   } else if (command === 'bootstrap') {
     const project = initialize(positional[0] || process.cwd());
     console.log(`Maria initialized ${project.root}`);
+    await serve({ port: Number(option('--port') || 4317), open: !args.includes('--no-open') });
     try {
-      const run = await runWorkflow(project.root, { agent: option('--agent') || 'auto' }, current => console.log(`${current.id}: ${current.phase} → ${current.status}`));
+      const run = await runWorkflow(project.root, { agent: option('--agent') || 'auto' }, current => console.log(`${current.id}: ${current.phase} → ${current.status}${current.phase === 'discovery' || current.phase === 'automation' ? ` · log: ${current.agents.at(-1)?.log || ''}` : ''}`));
       console.log(run.summary);
     } catch (error) { console.error(`Initial run unavailable: ${error.message}`); }
-    await serve({ port: Number(option('--port') || 4317), open: !args.includes('--no-open') });
   } else if (command === 'run') {
     const project = configuredProject(positional[0] || process.cwd());
     const run = await runWorkflow(project, { agent: option('--agent') || undefined }, current => console.log(`${current.id}: ${current.phase} → ${current.status}`));
