@@ -1,0 +1,87 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { agentPrompt, runAgent, selectAgents } from './agents.js';
+import { configuredProject, dataDir, inside, now, readJson, writeJson } from './files.js';
+import { caseCoverage, collectArtifacts, parseLcov, parseReport, readProjectData } from './results.js';
+import { validateContext } from './validate.js';
+
+export function listRuns(project) {
+  const dir = path.join(dataDir(project), 'runs');
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).flatMap(id => {
+    const run = readJson(path.join(dir, id, 'run.json'));
+    return run ? [run] : [];
+  }).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+}
+
+function executeCommand(command, project, logFile, timeoutMs = 15 * 60 * 1000) {
+  return new Promise((resolve, reject) => {
+    const log = fs.createWriteStream(logFile);
+    const child = spawn(command, { cwd: project, env: process.env, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    child.stdout.pipe(log, { end: false });
+    child.stderr.pipe(log, { end: false });
+    const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+    child.once('error', error => { clearTimeout(timer); log.end(); reject(error); });
+    child.once('close', code => { clearTimeout(timer); log.end(); resolve({ code, timedOut: code === null }); });
+  });
+}
+
+export async function runWorkflow(projectInput, options = {}, onUpdate = () => {}) {
+  const project = configuredProject(projectInput);
+  const mode = options.agent || readJson(path.join(dataDir(project), 'project.json'), {}).preferredAgent || 'auto';
+  const selected = selectAgents(mode);
+  const id = `${new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15)}-${randomUUID().slice(0, 8)}`;
+  const runDir = path.join(dataDir(project), 'runs', id);
+  fs.mkdirSync(runDir, { recursive: true });
+  const record = { schemaVersion: 1, id, startedAt: now(), finishedAt: null, status: 'running', phase: 'starting', agents: [], tests: [], artifacts: [], coverage: { lines: null, branches: null, functions: null, rules: null, cases: null }, summary: '' };
+  const save = () => { writeJson(path.join(runDir, 'run.json'), record); onUpdate(record); };
+  save();
+  try {
+    for (const [index, phase] of ['discovery', 'automation'].entries()) {
+      if (!selected.length) break;
+      const name = selected[index];
+      record.phase = phase;
+      const log = path.join(runDir, `${phase}.log`);
+      const step = { phase, name, status: 'running', log: path.relative(project, log) };
+      record.agents.push(step);
+      save();
+      const result = await runAgent(name, project, agentPrompt(project, phase), log);
+      step.status = result.status;
+      step.exitCode = result.code;
+      save();
+      if (result.code !== 0) throw new Error(`${name} ${phase} failed. See ${step.log}`);
+      const errors = validateContext(project, phase);
+      if (errors.length) throw new Error(`${name} ${phase} left invalid Maria data: ${errors.join('; ')}`);
+    }
+    record.phase = 'tests';
+    save();
+    const { runner, product, cases } = readProjectData(project);
+    record.coverage = { ...record.coverage, ...caseCoverage(product, cases) };
+    if (!runner.command) throw new Error('No test command configured in .maria/runner.json');
+    const logFile = path.join(runDir, 'test.log');
+    const result = await executeCommand(runner.command, project, logFile, options.timeoutMs);
+    record.artifacts.push({ kind: 'log', path: path.relative(project, logFile) });
+    if (runner.reportPath) record.tests = parseReport(runner.format, inside(project, runner.reportPath));
+    if (runner.coveragePath) record.coverage = { ...record.coverage, ...parseLcov(inside(project, runner.coveragePath)) };
+    record.artifacts.push(...collectArtifacts(project, runDir, runner));
+    record.commandExitCode = result.code;
+    if (result.timedOut) throw new Error('Test command timed out');
+    if (!record.tests.length) {
+      record.status = 'incomplete';
+      record.summary = 'Test command finished, but no machine-readable test results were found.';
+    } else {
+      record.status = result.code === 0 && record.tests.every(test => test.status !== 'failed') ? 'passed' : 'failed';
+      record.summary = `${record.tests.filter(test => test.status === 'passed').length} passed, ${record.tests.filter(test => test.status === 'failed').length} failed, ${record.tests.filter(test => test.status === 'skipped').length} skipped.`;
+    }
+  } catch (error) {
+    record.status = 'incomplete';
+    record.summary = error.message;
+  } finally {
+    record.phase = 'finished';
+    record.finishedAt = now();
+    save();
+  }
+  return record;
+}

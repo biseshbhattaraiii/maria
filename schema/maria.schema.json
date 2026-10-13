@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/biseshbhattaraiii/maria/blob/main/schema/maria.schema.json",
+  "title": "Maria data contract",
+  "description": "Version 1 project context, test cases, runner settings, and run results.",
+  "$defs": {
+    "project": {
+      "type": "object", "required": ["schemaVersion", "id", "name", "root", "createdAt", "preferredAgent"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "id": { "type": "string" }, "name": { "type": "string" },
+        "root": { "type": "string" }, "createdAt": { "type": "string", "format": "date-time" },
+        "preferredAgent": { "enum": ["auto", "collaborate", "claude", "codex", "none"] }
+      }
+    },
+    "handoff": {
+      "type": "object", "required": ["schemaVersion", "phase", "agent", "summary", "completed", "next", "risks", "updatedAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "phase": { "type": "string" }, "agent": { "type": "string" },
+        "summary": { "type": "string" },
+        "completed": { "type": "array", "items": { "type": "string" } },
+        "next": { "type": "array", "items": { "type": "string" } },
+        "risks": { "type": "array", "items": { "type": "string" } },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "product": {
+      "type": "object",
+      "required": ["schemaVersion", "name", "summary", "features", "rules"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "name": { "type": "string" },
+        "summary": { "type": "string" },
+        "platforms": { "type": "array", "items": { "enum": ["web", "ios", "android", "api", "other"] } },
+        "personas": { "type": "array", "items": { "type": "string" } },
+        "features": { "type": "array", "items": { "$ref": "#/$defs/feature" } },
+        "rules": { "type": "array", "items": { "$ref": "#/$defs/rule" } },
+        "sources": { "type": "array", "items": { "type": "string" } },
+        "unknowns": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "feature": {
+      "type": "object",
+      "required": ["id", "name", "description"],
+      "properties": {
+        "id": { "type": "string" }, "name": { "type": "string" },
+        "description": { "type": "string" },
+        "sourcePaths": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["id", "featureId", "statement", "sourcePaths"],
+      "properties": {
+        "id": { "type": "string" }, "featureId": { "type": "string" },
+        "statement": { "type": "string" },
+        "sourcePaths": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "enum": ["documented", "inferred", "observed"] }
+      }
+    },
+    "cases": {
+      "type": "object", "required": ["schemaVersion", "cases"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "cases": { "type": "array", "items": { "$ref": "#/$defs/case" } }
+      }
+    },
+    "case": {
+      "type": "object", "required": ["id", "title", "featureId", "ruleIds", "steps", "expected", "priority", "automation"],
+      "properties": {
+        "id": { "type": "string" }, "title": { "type": "string" },
+        "featureId": { "type": "string" },
+        "ruleIds": { "type": "array", "items": { "type": "string" } },
+        "preconditions": { "type": "array", "items": { "type": "string" } },
+        "steps": { "type": "array", "items": { "type": "string" } },
+        "expected": { "type": "array", "items": { "type": "string" } },
+        "priority": { "enum": ["critical", "high", "medium", "low"] },
+        "automation": {
+          "type": "object", "required": ["status", "file"],
+          "properties": {
+            "status": { "enum": ["planned", "automated", "blocked"] },
+            "file": { "type": ["string", "null"] },
+            "testName": { "type": ["string", "null"] },
+            "reason": { "type": "string" }
+          }
+        }
+      }
+    },
+    "runner": {
+      "type": "object", "required": ["schemaVersion", "command", "format", "reportPath", "coveragePath", "screenshotsPath"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "command": { "type": "string" },
+        "format": { "enum": ["playwright-json", "jest-json", "junit", "none"] },
+        "reportPath": { "type": "string" },
+        "coveragePath": { "type": "string" },
+        "screenshotsPath": { "type": "string" }
+      }
+    },
+    "run": {
+      "type": "object", "required": ["schemaVersion", "id", "startedAt", "status", "agents", "tests", "artifacts", "coverage"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "id": { "type": "string" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "finishedAt": { "type": ["string", "null"], "format": "date-time" },
+        "status": { "enum": ["running", "passed", "failed", "incomplete"] },
+        "agents": { "type": "array", "items": { "type": "object", "required": ["phase", "name", "status"], "properties": { "phase": { "type": "string" }, "name": { "type": "string" }, "status": { "type": "string" }, "log": { "type": "string" } } } },
+        "tests": { "type": "array", "items": { "type": "object", "required": ["name", "status"], "properties": { "name": { "type": "string" }, "status": { "enum": ["passed", "failed", "skipped"] }, "durationMs": { "type": "number" }, "error": { "type": "string" }, "caseId": { "type": "string" }, "file": { "type": "string" } } } },
+        "artifacts": { "type": "array", "items": { "type": "object", "required": ["kind", "path"], "properties": { "kind": { "enum": ["screenshot", "video", "trace", "log", "report"] }, "path": { "type": "string" }, "testName": { "type": "string" } } } },
+        "coverage": { "type": "object", "properties": { "lines": { "type": ["number", "null"] }, "branches": { "type": ["number", "null"] }, "functions": { "type": ["number", "null"] }, "rules": { "type": ["number", "null"] }, "cases": { "type": ["number", "null"] } } }
+      }
+    }
+  }
+}
