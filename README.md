@@ -36,6 +36,10 @@ Maria calls Claude Code in print mode with streaming JSON progress and calls `co
 
 During a long run, open **Test runs** in the dashboard to see the current phase and its log. From a second terminal, you can also run `tail -f .maria/runs/<run-id>/discovery-claude.log` (or `automation-codex.log`). An agent phase has a 45-minute total limit and an 8-minute no-activity limit. Set `MARIA_AGENT_TIMEOUT_MINUTES` and `MARIA_AGENT_IDLE_TIMEOUT_MINUTES` before running Maria to adjust them. Warnings about rules in `~/.claude/settings.json` come from Claude Code's existing configuration, not Maria; review the named rules separately.
 
+If discovery completed but automation stopped, resume from the saved product model and cases with `maria run --from automation --agent claude` (or select **Resume automation** in the dashboard). Maria asks the agent to finish a working runner and at most three high priority cases per pass. Once `.maria/runner.json` has a command and report path, `maria run --from tests` executes the tests without starting an agent. Resuming preserves the existing project files, including any tests written before a timeout.
+
+If Codex reports that its configured model is unsupported for your ChatGPT account, select an available model in the Codex CLI, or set `MARIA_CODEX_MODEL` to a model your account supports before running Maria. Maria passes that value to `codex exec -m`; it does not alter your Codex configuration.
+
 The project-local skill is installed at `.agents/skills/maria/SKILL.md` and `.claude/skills/maria/SKILL.md`, with references added to `AGENTS.md` and `CLAUDE.md`. Maria preserves existing context and case files on subsequent `init` calls.
 
 ## Data contract

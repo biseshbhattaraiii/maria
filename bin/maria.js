@@ -26,7 +26,7 @@ try {
     } catch (error) { console.error(`Initial run unavailable: ${error.message}`); }
   } else if (command === 'run') {
     const project = configuredProject(positional[0] || process.cwd());
-    const run = await runWorkflow(project, { agent: option('--agent') || undefined }, current => console.log(`${current.id}: ${current.phase} → ${current.status}`));
+    const run = await runWorkflow(project, { agent: option('--agent') || undefined, from: option('--from') || 'discovery' }, current => console.log(`${current.id}: ${current.phase} → ${current.status}`));
     console.log(`${run.summary} Open with: maria serve`);
     if (run.status !== 'passed') process.exitCode = 1;
   } else if (command === 'serve') {
@@ -49,7 +49,7 @@ try {
     writeJson(file, runner);
     console.log(JSON.stringify(runner, null, 2));
   } else {
-    console.log(`Maria testing kit\n\nUsage:\n  maria bootstrap [project] [--agent auto|collaborate|claude|codex|none]\n  maria init [project]\n  maria run [project] [--agent auto|collaborate|claude|codex|none]\n  maria serve [--port 4317] [--no-open]\n  maria status [project]\n  maria projects\n  maria config [project] --command "npm run test:e2e" --format playwright-json --reportPath results.json\n\nAgents: ${JSON.stringify(availableAgents())}`);
+    console.log(`Maria testing kit\n\nUsage:\n  maria bootstrap [project] [--agent auto|collaborate|claude|codex|none]\n  maria init [project]\n  maria run [project] [--agent auto|collaborate|claude|codex|none] [--from discovery|automation|tests]\n  maria serve [--port 4317] [--no-open]\n  maria status [project]\n  maria projects\n  maria config [project] --command "npm run test:e2e" --format playwright-json --reportPath results.json\n\nAgents: ${JSON.stringify(availableAgents())}`);
   }
 } catch (error) {
   console.error(`Maria: ${error.message}`);

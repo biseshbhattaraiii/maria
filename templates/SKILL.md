@@ -15,7 +15,7 @@ Write `.maria/cases.json` with actionable cases. Each case has a stable ID, feat
 
 ## Automation
 
-Use the project's existing test framework when suitable. Add or update automation for the most important cases. Update each case's `automation.file` and `automation.testName` only when that test actually exists. Use stable case IDs in test titles where possible, for example `[case-login-01] rejects invalid password`.
+Use the project's existing test framework when suitable. Start with no more than three important cases per Maria run so results arrive before expanding coverage. Add or update automation for those cases. Update each case's `automation.file` and `automation.testName` only when that test actually exists. Use stable case IDs in test titles where possible, for example `[case-login-01] rejects invalid password`.
 
 Set `.maria/runner.json` to a repeatable test command. Its `format` is `playwright-json`, `jest-json`, `junit`, or `none`. Set `reportPath`, `coveragePath` (LCOV info file), and `screenshotsPath` relative to the project root. Configure the test framework to emit the declared report. Do not claim a passing test without a run result.
 

@@ -23,11 +23,13 @@ test('agent handoff, Jest ingestion, screenshots, and coverage work together', a
   const { root, project } = workspace();
   const originalClaude = process.env.MARIA_CLAUDE_BIN;
   const originalCodex = process.env.MARIA_CODEX_BIN;
+  const originalCodexModel = process.env.MARIA_CODEX_MODEL;
   try {
     fs.writeFileSync(path.join(project, 'report.cjs'), `const fs = require('fs'); fs.mkdirSync('test-results',{recursive:true}); fs.writeFileSync('test-results/results.json',JSON.stringify({testResults:[{name:'tests/login.test.js',assertionResults:[{fullName:'[case-login-01] accepts a valid user',status:'passed',duration:12,failureMessages:[]}]}]})); fs.writeFileSync('test-results/screenshot.png',Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9X5HkAAAAASUVORK5CYII=','base64')); fs.mkdirSync('coverage',{recursive:true}); fs.writeFileSync('coverage/lcov.info','SF:login.js\\nLF:10\\nLH:8\\nBRF:4\\nBRH:3\\nFNF:2\\nFNH:2\\nend_of_record\\n');`);
     const fake = `#!/usr/bin/env node
 const fs=require('fs'); const path=require('path');
 if(process.argv.includes('--version')) { console.log('1.0'); process.exit(0); }
+if(process.argv[1].includes('fake-codex')) fs.writeFileSync('codex-args.json',JSON.stringify(process.argv.slice(2)));
 console.log(JSON.stringify({type:'assistant',message:{content:[{type:'text',text:'Exploring project'}]}}));
 let input=''; process.stdin.on('data',chunk=>input+=chunk); process.stdin.on('end',()=>{
 const dir=path.join(process.cwd(),'.maria');
@@ -47,6 +49,7 @@ fs.writeFileSync(path.join(dir,'handoff.json'),JSON.stringify({schemaVersion:1,p
     fs.writeFileSync(codex, fake, { mode: 0o755 });
     process.env.MARIA_CLAUDE_BIN = claude;
     process.env.MARIA_CODEX_BIN = codex;
+    process.env.MARIA_CODEX_MODEL = 'supported-test-model';
     const run = await runWorkflow(project, { agent: 'collaborate' });
     assert.equal(run.status, 'passed', run.summary);
     assert.deepEqual(run.agents.map(agent => agent.name), ['claude', 'codex']);
@@ -58,9 +61,21 @@ fs.writeFileSync(path.join(dir,'handoff.json'),JSON.stringify({schemaVersion:1,p
     assert.match(fs.readFileSync(path.join(project, run.agents[0].log), 'utf8'), /Exploring project/);
     assert.ok(run.artifacts.every(item => fs.existsSync(path.join(project, item.path))));
     assert.equal(readJson(path.join(project, '.maria', 'handoff.json')).agent, 'codex');
+    assert.deepEqual(readJson(path.join(project, 'codex-args.json')).slice(0, 4), ['exec', '--approve-for-me', '-m', 'supported-test-model']);
+    const resumed = await runWorkflow(project, { agent: 'codex', from: 'automation' });
+    assert.equal(resumed.status, 'passed', resumed.summary);
+    assert.deepEqual(resumed.agents.map(agent => agent.phase), ['automation']);
+    const testsOnly = await runWorkflow(project, { from: 'tests' });
+    assert.equal(testsOnly.status, 'passed', testsOnly.summary);
+    assert.deepEqual(testsOnly.agents, []);
+    fs.writeFileSync(codex, `#!/usr/bin/env node\nif(process.argv.includes('--version')) process.exit(0); console.error("The 'unavailable-model' model is not supported when using Codex with a ChatGPT account."); process.exit(1);`);
+    const unsupported = await runWorkflow(project, { agent: 'codex', from: 'automation' });
+    assert.equal(unsupported.status, 'incomplete');
+    assert.match(unsupported.summary, /selected model is unsupported for this ChatGPT account/);
   } finally {
     if (originalClaude === undefined) delete process.env.MARIA_CLAUDE_BIN; else process.env.MARIA_CLAUDE_BIN = originalClaude;
     if (originalCodex === undefined) delete process.env.MARIA_CODEX_BIN; else process.env.MARIA_CODEX_BIN = originalCodex;
+    if (originalCodexModel === undefined) delete process.env.MARIA_CODEX_MODEL; else process.env.MARIA_CODEX_MODEL = originalCodexModel;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

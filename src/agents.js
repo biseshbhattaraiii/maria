@@ -30,7 +30,7 @@ export function selectAgents(mode, available = availableAgents()) {
 export function agentPrompt(project, phase) {
   const shared = `You are working in ${project}. Read the local Maria skill and the files in .maria/ first. Follow existing project instructions. The JSON contract is in .maria/schema.json. Preserve stable IDs and write valid JSON. Keep actions within this project. Do not edit .maria/runs/.`;
   if (phase === 'discovery') return `${shared}\nDiscover the product and its real requirements from source and documentation. Write .maria/product.json and .maria/cases.json with evidence-linked rules and executable test cases. End with .maria/handoff.json for the automation agent. Do not write tests in this phase.`;
-  return `${shared}\nRead .maria/handoff.json, verify the discovery output, implement the highest-priority test cases using an appropriate existing framework, and update .maria/cases.json with actual test paths and names. Configure .maria/runner.json with a repeatable command and machine-readable report path; configure failure screenshots where supported. Write a new .maria/handoff.json summarizing what runs and anything blocked. Maria will run the configured test command after you finish.`;
+  return `${shared}\nRead .maria/handoff.json and verify the discovery output. In this run, implement at most three highest-priority test cases using an appropriate existing framework. Get a working runner and machine-readable report configured before expanding coverage. Update .maria/cases.json with actual test paths and names. Configure .maria/runner.json with a repeatable command and machine-readable report path; configure failure screenshots where supported. Write a new .maria/handoff.json summarizing what runs and anything blocked. Maria will run the configured test command after you finish.`;
 }
 
 function claudeEvent(line) {
@@ -51,7 +51,9 @@ function claudeEvent(line) {
 
 export async function runAgent(name, project, prompt, logFile, { timeoutMs = 45 * 60 * 1000, idleTimeoutMs = 8 * 60 * 1000, onProgress = () => {} } = {}) {
   const bin = commands[name]();
-  const args = name === 'codex' ? ['exec', '--approve-for-me', '-C', project, '-'] : ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose'];
+  const args = name === 'codex'
+    ? ['exec', '--approve-for-me', ...(process.env.MARIA_CODEX_MODEL ? ['-m', process.env.MARIA_CODEX_MODEL] : []), '-C', project, '-']
+    : ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose'];
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   const log = fs.createWriteStream(logFile);
   return new Promise((resolve, reject) => {
@@ -72,7 +74,15 @@ export async function runAgent(name, project, prompt, logFile, { timeoutMs = 45 
       if (message) onProgress(message);
     };
     activity('Agent started');
-    const cleanup = () => { clearTimeout(timer); clearTimeout(idleTimer); clearTimeout(forceTimer); log.end(); };
+    let settled = false;
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(idleTimer);
+      clearTimeout(forceTimer);
+      log.end(() => error ? reject(error) : resolve(result));
+    };
     if (name === 'claude') {
       let pending = '';
       child.stdout.on('data', chunk => {
@@ -88,7 +98,7 @@ export async function runAgent(name, project, prompt, logFile, { timeoutMs = 45 
     } else child.stdout.on('data', chunk => { log.write(chunk); activity('Codex is working'); });
     child.stderr.on('data', chunk => { log.write(chunk); activity(`${name} reported diagnostic output`); });
     child.stdin.end(prompt);
-    child.once('error', error => { cleanup(); reject(error); });
-    child.once('close', code => { cleanup(); resolve({ code, stopReason, status: code === 0 ? 'completed' : 'failed' }); });
+    child.once('error', error => finish(error));
+    child.once('close', code => finish(null, { code, stopReason, status: code === 0 ? 'completed' : 'failed' }));
   });
 }

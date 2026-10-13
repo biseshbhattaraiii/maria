@@ -42,8 +42,8 @@ function sectionHeading(title, description, actions = '') {
 
 function runControls() {
   const available = state.meta.agents;
-  const options = [['auto', 'Auto'], ['collaborate', 'Claude + Codex'], ['codex', 'Codex'], ['claude', 'Claude'], ['none', 'Tests only']];
-  return `<select class="select" id="agent-mode" aria-label="Agent mode">${options.map(([value, label]) => `<option value="${value}" ${value === 'collaborate' && !(available.claude && available.codex) ? 'disabled' : ''} ${value === 'codex' && !available.codex ? 'disabled' : ''} ${value === 'claude' && !available.claude ? 'disabled' : ''}>${label}</option>`).join('')}</select><button class="button primary" id="run-button" ${state.data?.running ? 'disabled' : ''}>${state.data?.running ? 'Running…' : 'Run Maria'} <span>↗</span></button>`;
+  const options = [['auto', 'Auto'], ['collaborate', 'Claude + Codex'], ['codex', 'Codex'], ['claude', 'Claude']];
+  return `<select class="select" id="run-from" aria-label="Starting phase"><option value="discovery">Full workflow</option><option value="automation">Resume automation</option><option value="tests">Run existing tests</option></select><select class="select" id="agent-mode" aria-label="Agent mode">${options.map(([value, label]) => `<option value="${value}" ${value === 'collaborate' && !(available.claude && available.codex) ? 'disabled' : ''} ${value === 'codex' && !available.codex ? 'disabled' : ''} ${value === 'claude' && !available.claude ? 'disabled' : ''}>${label}</option>`).join('')}</select><button class="button primary" id="run-button" ${state.data?.running ? 'disabled' : ''}>${state.data?.running ? 'Running…' : 'Run Maria'} <span>↗</span></button>`;
 }
 
 function metric(label, value, note, icon) { return `<div class="metric-card"><div class="metric-label">${escape(label)}<span class="metric-icon">${icon}</span></div><div class="metric-value">${escape(value)}</div><div class="metric-note">${escape(note)}</div></div>`; }
@@ -118,7 +118,7 @@ function render() {
 }
 
 async function startRun() {
-  try { await api('/api/runs', { project: state.selected, agent: $('#agent-mode').value }); toast('Maria run started. Results will appear here.'); await refresh(); }
+  try { await api('/api/runs', { project: state.selected, agent: $('#agent-mode').value, from: $('#run-from').value }); toast('Maria run started. Results will appear here.'); await refresh(); }
   catch (error) { toast(error.message, true); }
 }
 

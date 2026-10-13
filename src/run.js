@@ -21,6 +21,16 @@ function durationFromEnv(name, fallbackMinutes) {
   return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 * 1000 : fallbackMinutes * 60 * 1000;
 }
 
+function agentFailure(name, phase, code, logPath, relativeLog) {
+  if (name === 'codex') {
+    const tail = fs.readFileSync(logPath, 'utf8').slice(-12000);
+    if (/is not supported when using Codex with a ChatGPT account/.test(tail)) {
+      return new Error(`Codex's selected model is unsupported for this ChatGPT account. Select a supported model in Codex or set MARIA_CODEX_MODEL, then resume automation. See ${relativeLog}`);
+    }
+  }
+  return new Error(`${name} ${phase} exited with ${code}. See ${relativeLog}`);
+}
+
 function executeCommand(command, project, logFile, timeoutMs = 15 * 60 * 1000) {
   return new Promise((resolve, reject) => {
     const log = fs.createWriteStream(logFile);
@@ -35,8 +45,10 @@ function executeCommand(command, project, logFile, timeoutMs = 15 * 60 * 1000) {
 
 export async function runWorkflow(projectInput, options = {}, onUpdate = () => {}) {
   const project = configuredProject(projectInput);
+  const from = options.from || 'discovery';
+  if (!['discovery', 'automation', 'tests'].includes(from)) throw new Error(`Unknown starting phase: ${from}`);
   const mode = options.agent || readJson(path.join(dataDir(project), 'project.json'), {}).preferredAgent || 'auto';
-  const selected = selectAgents(mode);
+  const selected = from === 'tests' ? [] : selectAgents(mode);
   const agentTimeoutMs = options.agentTimeoutMs ?? durationFromEnv('MARIA_AGENT_TIMEOUT_MINUTES', 45);
   const agentIdleTimeoutMs = options.agentIdleTimeoutMs ?? durationFromEnv('MARIA_AGENT_IDLE_TIMEOUT_MINUTES', 8);
   const id = `${new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15)}-${randomUUID().slice(0, 8)}`;
@@ -46,7 +58,12 @@ export async function runWorkflow(projectInput, options = {}, onUpdate = () => {
   const save = () => { writeJson(path.join(runDir, 'run.json'), record); onUpdate(record); };
   save();
   try {
+    if (from === 'automation') {
+      const errors = validateContext(project, 'discovery');
+      if (errors.length) throw new Error(`Cannot resume automation: ${errors.join('; ')}`);
+    }
     for (const [index, phase] of ['discovery', 'automation'].entries()) {
+      if (from === 'tests' || (from === 'automation' && phase === 'discovery')) continue;
       if (!selected.length) break;
       record.phase = phase;
       const candidates = selected[0] === selected[1] ? [selected[index]] : [selected[index], selected[1 - index]];
@@ -72,7 +89,7 @@ export async function runWorkflow(projectInput, options = {}, onUpdate = () => {
           });
           step.exitCode = result.code;
           if (result.stopReason) throw new Error(`${name} ${phase} stopped: ${result.stopReason}. See ${step.log}`);
-          if (result.code !== 0) throw new Error(`${name} ${phase} exited with ${result.code}. See ${step.log}`);
+          if (result.code !== 0) throw agentFailure(name, phase, result.code, log, step.log);
           const errors = validateContext(project, phase);
           if (errors.length) throw new Error(`${name} ${phase} left invalid Maria data: ${errors.join('; ')}`);
           step.status = 'completed';
