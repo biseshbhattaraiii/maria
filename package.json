@@ -1,6 +1,6 @@
 {
   "name": "maria-testing-kit",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Local AI-assisted software testing command center",
   "type": "module",
   "bin": { "maria": "./bin/maria.js" },

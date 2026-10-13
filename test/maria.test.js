@@ -28,6 +28,7 @@ test('agent handoff, Jest ingestion, screenshots, and coverage work together', a
     const fake = `#!/usr/bin/env node
 const fs=require('fs'); const path=require('path');
 if(process.argv.includes('--version')) { console.log('1.0'); process.exit(0); }
+console.log(JSON.stringify({type:'assistant',message:{content:[{type:'text',text:'Exploring project'}]}}));
 let input=''; process.stdin.on('data',chunk=>input+=chunk); process.stdin.on('end',()=>{
 const dir=path.join(process.cwd(),'.maria');
 if(input.includes('Do not write tests in this phase')) {
@@ -53,9 +54,46 @@ fs.writeFileSync(path.join(dir,'handoff.json'),JSON.stringify({schemaVersion:1,p
     assert.equal(run.coverage.lines, 80);
     assert.equal(run.coverage.rules, 100);
     assert.ok(run.artifacts.some(item => item.kind === 'screenshot'));
-    assert.ok(run.artifacts.some(item => item.path.endsWith('discovery.log')));
+    assert.ok(run.artifacts.some(item => item.path.endsWith('discovery-claude.log')));
+    assert.match(fs.readFileSync(path.join(project, run.agents[0].log), 'utf8'), /Exploring project/);
     assert.ok(run.artifacts.every(item => fs.existsSync(path.join(project, item.path))));
     assert.equal(readJson(path.join(project, '.maria', 'handoff.json')).agent, 'codex');
+  } finally {
+    if (originalClaude === undefined) delete process.env.MARIA_CLAUDE_BIN; else process.env.MARIA_CLAUDE_BIN = originalClaude;
+    if (originalCodex === undefined) delete process.env.MARIA_CODEX_BIN; else process.env.MARIA_CODEX_BIN = originalCodex;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Codex takes over discovery when Claude makes no progress', async () => {
+  const { root, project } = workspace();
+  const originalClaude = process.env.MARIA_CLAUDE_BIN;
+  const originalCodex = process.env.MARIA_CODEX_BIN;
+  try {
+    fs.writeFileSync(path.join(project, 'report.cjs'), `require('fs').writeFileSync('junit.xml','<testsuite><testcase name="[case-ready] works"/></testsuite>');`);
+    const claude = path.join(root, 'fake-claude');
+    fs.writeFileSync(claude, `#!/usr/bin/env node\nif(process.argv.includes('--version')) process.exit(0); setInterval(()=>{},1000);`, { mode: 0o755 });
+    const codex = path.join(root, 'fake-codex');
+    fs.writeFileSync(codex, `#!/usr/bin/env node
+const fs=require('fs'); const path=require('path');
+if(process.argv.includes('--version')) process.exit(0);
+let prompt=''; process.stdin.on('data',chunk=>prompt+=chunk); process.stdin.on('end',()=>{
+const dir=path.join(process.cwd(),'.maria');
+if(prompt.includes('Do not write tests in this phase')) {
+fs.writeFileSync(path.join(dir,'product.json'),JSON.stringify({schemaVersion:1,name:'Ready app',summary:'A readiness check',features:[{id:'feature-ready',name:'Ready',description:'Show readiness'}],rules:[{id:'rule-ready',featureId:'feature-ready',statement:'Ready state works',sourcePaths:['README.md']}]}));
+fs.writeFileSync(path.join(dir,'cases.json'),JSON.stringify({schemaVersion:1,cases:[{id:'case-ready',title:'Readiness',featureId:'feature-ready',ruleIds:['rule-ready'],steps:['Open app'],expected:['Ready'],priority:'high',automation:{status:'planned',file:null}}]}));
+} else {
+const cases=JSON.parse(fs.readFileSync(path.join(dir,'cases.json'))); cases.cases[0].automation={status:'automated',file:'tests/ready.test.js'}; fs.mkdirSync('tests',{recursive:true}); fs.writeFileSync('tests/ready.test.js','// fixture'); fs.writeFileSync(path.join(dir,'cases.json'),JSON.stringify(cases));
+fs.writeFileSync(path.join(dir,'runner.json'),JSON.stringify({schemaVersion:1,command:'node report.cjs',format:'junit',reportPath:'junit.xml',coveragePath:'',screenshotsPath:''}));
+}
+fs.writeFileSync(path.join(dir,'handoff.json'),JSON.stringify({schemaVersion:1,phase:'done',agent:'codex',summary:'Phase completed',completed:[],next:[],risks:[],updatedAt:new Date().toISOString()}));
+});`, { mode: 0o755 });
+    process.env.MARIA_CLAUDE_BIN = claude;
+    process.env.MARIA_CODEX_BIN = codex;
+    const run = await runWorkflow(project, { agent: 'auto', agentTimeoutMs: 5000, agentIdleTimeoutMs: 100 });
+    assert.equal(run.status, 'passed', run.summary);
+    assert.deepEqual(run.agents.map(agent => [agent.name, agent.status]), [['claude', 'failed'], ['codex', 'completed'], ['codex', 'completed']]);
+    assert.match(run.agents[0].error, /no activity/);
   } finally {
     if (originalClaude === undefined) delete process.env.MARIA_CLAUDE_BIN; else process.env.MARIA_CLAUDE_BIN = originalClaude;
     if (originalCodex === undefined) delete process.env.MARIA_CODEX_BIN; else process.env.MARIA_CODEX_BIN = originalCodex;

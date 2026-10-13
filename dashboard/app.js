@@ -53,7 +53,7 @@ function runNotice(run) {
   const active = run.status === 'running';
   const phase = run.phase === 'discovery' ? 'learning the project and writing cases' : run.phase === 'automation' ? 'writing automated tests' : run.phase === 'tests' ? 'running the tests' : 'preparing the run';
   const message = active ? `Maria is ${phase}. Test results and coverage appear after the test command finishes.` : run.summary || 'This run did not produce complete results.';
-  return `<section class="panel"><div class="panel-body"><strong>${active ? 'Run in progress' : 'Run needs attention'}</strong><p class="muted">${escape(message)}</p>${active ? '<button class="view-link" data-view-link="runs">Open this run →</button>' : ''}</div></section>`;
+  return `<section class="panel"><div class="panel-body"><strong>${active ? 'Run in progress' : 'Run needs attention'}</strong><p class="muted">${escape(message)}</p>${active && run.activity ? `<p class="source">Latest activity: ${escape(run.activity)}</p>` : ''}${active ? '<button class="view-link" data-view-link="runs">Open this run →</button>' : ''}</div></section>`;
 }
 
 function renderOverview() {
@@ -69,7 +69,7 @@ function renderOverview() {
     <div class="section-grid"><section class="panel"><div class="panel-head"><h2>Recent test runs</h2><button class="view-link" data-view-link="runs">View all →</button></div><div class="panel-body">${runs.length ? runs.slice(0, 5).map(runRow).join('') : '<div class="empty">No results yet. Run Maria to generate the first test run.</div>'}</div></section><section class="panel"><div class="panel-head"><h2>Automation snapshot</h2><button class="view-link" data-view-link="cases">View cases →</button></div><div class="panel-body"><div class="detail-grid"><div class="detail"><label>Automated cases</label><strong>${automated} of ${all.length}</strong></div><div class="detail"><label>Case coverage</label><strong>${pct(latest?.coverage?.cases ?? (all.length ? Math.round(automated / all.length * 100) : null))}</strong></div><div class="detail"><label>Line coverage</label><strong>${pct(latest?.coverage?.lines)}</strong></div><div class="detail"><label>Features</label><strong>${product.features?.length || 0}</strong></div></div></div></section></div>`;
 }
 
-function runRow(run) { return `<div class="run-row"><button data-run="${escape(run.id)}"><strong>${escape(run.id)}</strong><small>${escape(fmtDate(run.startedAt))} · ${escape(run.summary || run.phase)}</small></button>${badge(run.status)}</div>`; }
+function runRow(run) { return `<div class="run-row"><button data-run="${escape(run.id)}"><strong>${escape(run.id)}</strong><small>${escape(fmtDate(run.startedAt))} · ${escape(run.summary || run.activity || run.phase)}</small></button>${badge(run.status)}</div>`; }
 
 function renderProduct() {
   const { product, handoff } = state.data;

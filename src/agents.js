@@ -33,25 +33,62 @@ export function agentPrompt(project, phase) {
   return `${shared}\nRead .maria/handoff.json, verify the discovery output, implement the highest-priority test cases using an appropriate existing framework, and update .maria/cases.json with actual test paths and names. Configure .maria/runner.json with a repeatable command and machine-readable report path; configure failure screenshots where supported. Write a new .maria/handoff.json summarizing what runs and anything blocked. Maria will run the configured test command after you finish.`;
 }
 
-export async function runAgent(name, project, prompt, logFile, timeoutMs = 20 * 60 * 1000) {
+function claudeEvent(line) {
+  try {
+    const event = JSON.parse(line);
+    if (event.type === 'system' && event.subtype === 'init') return 'Claude session started';
+    if (event.type === 'assistant') {
+      const parts = event.message?.content || [];
+      const tools = parts.filter(part => part.type === 'tool_use').map(part => part.name);
+      if (tools.length) return `Claude using ${tools.join(', ')}`;
+      const spoken = parts.filter(part => part.type === 'text').map(part => part.text).join(' ').trim();
+      if (spoken) return spoken.slice(0, 500);
+    }
+    if (event.type === 'result') return event.is_error ? `Claude error: ${event.result || event.subtype}` : `Claude finished: ${String(event.result || '').slice(0, 500)}`;
+    return '';
+  } catch { return line.trim(); }
+}
+
+export async function runAgent(name, project, prompt, logFile, { timeoutMs = 45 * 60 * 1000, idleTimeoutMs = 8 * 60 * 1000, onProgress = () => {} } = {}) {
   const bin = commands[name]();
-  const args = name === 'codex' ? ['exec', '--approve-for-me', '-C', project, '-'] : ['-p', '--permission-mode', 'acceptEdits'];
+  const args = name === 'codex' ? ['exec', '--approve-for-me', '-C', project, '-'] : ['-p', '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose'];
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   const log = fs.createWriteStream(logFile);
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { cwd: project, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
-    let timedOut = false;
+    let stopReason = '';
     let forceTimer;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    let idleTimer;
+    const stop = reason => {
+      if (stopReason) return;
+      stopReason = reason;
       child.kill('SIGTERM');
       forceTimer = setTimeout(() => child.kill('SIGKILL'), 5000);
-    }, timeoutMs);
-    const cleanup = () => { clearTimeout(timer); clearTimeout(forceTimer); log.end(); };
-    child.stdout.pipe(log, { end: false });
-    child.stderr.pipe(log, { end: false });
+    };
+    const timer = setTimeout(() => stop('time limit'), timeoutMs);
+    const activity = message => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => stop('no activity'), idleTimeoutMs);
+      if (message) onProgress(message);
+    };
+    activity('Agent started');
+    const cleanup = () => { clearTimeout(timer); clearTimeout(idleTimer); clearTimeout(forceTimer); log.end(); };
+    if (name === 'claude') {
+      let pending = '';
+      child.stdout.on('data', chunk => {
+        pending += chunk.toString();
+        const lines = pending.split('\n');
+        pending = lines.pop();
+        for (const line of lines) {
+          const message = claudeEvent(line);
+          if (message) { log.write(`${message}\n`); activity(message); }
+        }
+      });
+      child.stdout.on('end', () => { if (pending.trim()) { const message = claudeEvent(pending); if (message) log.write(`${message}\n`); } });
+    } else child.stdout.on('data', chunk => { log.write(chunk); activity('Codex is working'); });
+    child.stderr.on('data', chunk => { log.write(chunk); activity(`${name} reported diagnostic output`); });
     child.stdin.end(prompt);
     child.once('error', error => { cleanup(); reject(error); });
-    child.once('close', code => { cleanup(); resolve({ code, timedOut, status: code === 0 ? 'completed' : 'failed' }); });
+    child.once('close', code => { cleanup(); resolve({ code, stopReason, status: code === 0 ? 'completed' : 'failed' }); });
   });
 }

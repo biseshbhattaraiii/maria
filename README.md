@@ -30,11 +30,11 @@ node bin/maria.js serve
 
 ## How the agents work together
 
-With both CLIs available, `auto` uses Claude Code to inspect the application and write the product model and test cases, then Codex to author automation. Each phase reads the same `.maria/` files and a written `handoff.json`. With one CLI, the same agent performs both phases. `collaborate` requires both. `none` skips the agents and runs an already configured test command.
+With both CLIs available, `auto` uses Claude Code to inspect the application and write the product model and test cases, then Codex to author automation. Each phase reads the same `.maria/` files and a written `handoff.json`. If either agent fails or stops making progress, Maria tries the other installed agent for that phase. With one CLI, the same agent performs both phases. `collaborate` requires both. `none` skips the agents and runs an already configured test command.
 
-Maria calls `claude -p --permission-mode acceptEdits` and `codex exec --approve-for-me -C <project> -` as local subprocesses. Their normal authentication and permission mechanisms still apply. Agent output is saved in the run directory. Maria does not silently fall back to a different agent if a requested CLI is unavailable.
+Maria calls Claude Code in print mode with streaming JSON progress and calls `codex exec --approve-for-me -C <project> -` as local subprocesses. Their normal authentication and permission mechanisms still apply. Agent output is saved in the run directory. Maria does not silently fall back to a different agent if a requested CLI is unavailable.
 
-During a long run, open **Test runs** in the dashboard to see the current phase and its log. From a second terminal, you can also run `tail -f .maria/runs/<run-id>/discovery.log` (or `automation.log`). A phase has a 20-minute timeout. Warnings about rules in `~/.claude/settings.json` come from Claude Code's existing configuration, not Maria; review the named rules separately.
+During a long run, open **Test runs** in the dashboard to see the current phase and its log. From a second terminal, you can also run `tail -f .maria/runs/<run-id>/discovery-claude.log` (or `automation-codex.log`). An agent phase has a 45-minute total limit and an 8-minute no-activity limit. Set `MARIA_AGENT_TIMEOUT_MINUTES` and `MARIA_AGENT_IDLE_TIMEOUT_MINUTES` before running Maria to adjust them. Warnings about rules in `~/.claude/settings.json` come from Claude Code's existing configuration, not Maria; review the named rules separately.
 
 The project-local skill is installed at `.agents/skills/maria/SKILL.md` and `.claude/skills/maria/SKILL.md`, with references added to `AGENTS.md` and `CLAUDE.md`. Maria preserves existing context and case files on subsequent `init` calls.
 

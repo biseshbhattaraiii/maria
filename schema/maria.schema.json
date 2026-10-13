@@ -102,6 +102,8 @@
         "schemaVersion": { "const": 1 }, "id": { "type": "string" },
         "startedAt": { "type": "string", "format": "date-time" },
         "processId": { "type": "integer" },
+        "activity": { "type": "string" },
+        "lastActivityAt": { "type": "string", "format": "date-time" },
         "finishedAt": { "type": ["string", "null"], "format": "date-time" },
         "status": { "enum": ["running", "passed", "failed", "incomplete"] },
         "agents": { "type": "array", "items": { "type": "object", "required": ["phase", "name", "status"], "properties": { "phase": { "type": "string" }, "name": { "type": "string" }, "status": { "type": "string" }, "log": { "type": "string" } } } },

@@ -16,6 +16,11 @@ export function listRuns(project) {
   }).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
+function durationFromEnv(name, fallbackMinutes) {
+  const minutes = Number(process.env[name]);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 * 1000 : fallbackMinutes * 60 * 1000;
+}
+
 function executeCommand(command, project, logFile, timeoutMs = 15 * 60 * 1000) {
   return new Promise((resolve, reject) => {
     const log = fs.createWriteStream(logFile);
@@ -32,6 +37,8 @@ export async function runWorkflow(projectInput, options = {}, onUpdate = () => {
   const project = configuredProject(projectInput);
   const mode = options.agent || readJson(path.join(dataDir(project), 'project.json'), {}).preferredAgent || 'auto';
   const selected = selectAgents(mode);
+  const agentTimeoutMs = options.agentTimeoutMs ?? durationFromEnv('MARIA_AGENT_TIMEOUT_MINUTES', 45);
+  const agentIdleTimeoutMs = options.agentIdleTimeoutMs ?? durationFromEnv('MARIA_AGENT_IDLE_TIMEOUT_MINUTES', 8);
   const id = `${new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15)}-${randomUUID().slice(0, 8)}`;
   const runDir = path.join(dataDir(project), 'runs', id);
   fs.mkdirSync(runDir, { recursive: true });
@@ -41,21 +48,46 @@ export async function runWorkflow(projectInput, options = {}, onUpdate = () => {
   try {
     for (const [index, phase] of ['discovery', 'automation'].entries()) {
       if (!selected.length) break;
-      const name = selected[index];
       record.phase = phase;
-      const log = path.join(runDir, `${phase}.log`);
-      const step = { phase, name, status: 'running', log: path.relative(project, log) };
-      record.agents.push(step);
-      record.artifacts.push({ kind: 'log', path: step.log });
-      save();
-      const result = await runAgent(name, project, agentPrompt(project, phase), log, options.agentTimeoutMs);
-      step.status = result.status;
-      step.exitCode = result.code;
-      save();
-      if (result.timedOut) throw new Error(`${name} ${phase} timed out after 20 minutes. See ${step.log}`);
-      if (result.code !== 0) throw new Error(`${name} ${phase} failed. See ${step.log}`);
-      const errors = validateContext(project, phase);
-      if (errors.length) throw new Error(`${name} ${phase} left invalid Maria data: ${errors.join('; ')}`);
+      const candidates = selected[0] === selected[1] ? [selected[index]] : [selected[index], selected[1 - index]];
+      const failures = [];
+      let completed = false;
+      for (const name of candidates) {
+        const log = path.join(runDir, `${phase}-${name}.log`);
+        const step = { phase, name, status: 'running', log: path.relative(project, log) };
+        record.agents.push(step);
+        record.artifacts.push({ kind: 'log', path: step.log });
+        record.activity = `${name} is working on ${phase}`;
+        save();
+        let lastProgressSave = 0;
+        try {
+          const result = await runAgent(name, project, agentPrompt(project, phase), log, {
+            timeoutMs: agentTimeoutMs,
+            idleTimeoutMs: agentIdleTimeoutMs,
+            onProgress: message => {
+              record.activity = message.slice(0, 200);
+              record.lastActivityAt = now();
+              if (Date.now() - lastProgressSave > 3000) { save(); lastProgressSave = Date.now(); }
+            }
+          });
+          step.exitCode = result.code;
+          if (result.stopReason) throw new Error(`${name} ${phase} stopped: ${result.stopReason}. See ${step.log}`);
+          if (result.code !== 0) throw new Error(`${name} ${phase} exited with ${result.code}. See ${step.log}`);
+          const errors = validateContext(project, phase);
+          if (errors.length) throw new Error(`${name} ${phase} left invalid Maria data: ${errors.join('; ')}`);
+          step.status = 'completed';
+          completed = true;
+          save();
+          break;
+        } catch (error) {
+          step.status = 'failed';
+          step.error = error.message;
+          failures.push(error.message);
+          record.activity = candidates.length > 1 && name === candidates[0] ? `${name} failed; trying ${candidates[1]}` : error.message;
+          save();
+        }
+      }
+      if (!completed) throw new Error(failures.join(' | '));
     }
     record.phase = 'tests';
     save();
