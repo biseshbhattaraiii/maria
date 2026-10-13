@@ -71,7 +71,20 @@ export function caseCoverage(product, cases) {
     rules: rules.length ? Math.round(rules.filter(item => ruleIds.has(item.id)).length / rules.length * 1000) / 10 : null };
 }
 
-export function collectArtifacts(project, runDir, runner) {
+function isWithinRealProject(project, file) {
+  const root = fs.realpathSync(project);
+  const target = fs.realpathSync(file);
+  return target === root || target.startsWith(root + path.sep);
+}
+
+function isFreshFile(project, file, startedAtMs) {
+  if (!fs.existsSync(file) || fs.lstatSync(file).isSymbolicLink()) return false;
+  if (!isWithinRealProject(project, file)) return false;
+  const stat = fs.statSync(file);
+  return stat.isFile() && stat.mtimeMs >= startedAtMs - 1000;
+}
+
+export function collectArtifacts(project, runDir, runner, tests = [], startedAtMs = 0) {
   const artifacts = [];
   const include = (source, kind) => {
     if (!source || !fs.existsSync(source)) return;
@@ -84,16 +97,74 @@ export function collectArtifacts(project, runDir, runner) {
       }
       return;
     }
-    if (!stat.isFile() || stat.size > 50 * 1024 * 1024) return;
+    if (!isFreshFile(project, source, startedAtMs) || stat.size > 50 * 1024 * 1024) return;
     const ext = path.extname(source).toLowerCase();
     if (kind === 'screenshot' && !['.png', '.jpg', '.jpeg', '.webp'].includes(ext)) return;
     const destination = path.join(runDir, 'artifacts', `${String(artifacts.length + 1).padStart(3, '0')}-${path.basename(source)}`);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.copyFileSync(source, destination);
-    artifacts.push({ kind, path: path.relative(project, destination).split(path.sep).join('/') });
+    const artifact = { kind, path: path.relative(project, destination).split(path.sep).join('/'), label: path.basename(source) };
+    if (kind === 'screenshot') {
+      const sourcePath = path.relative(project, source);
+      const matches = tests.filter(test => test.caseId && sourcePath.includes(test.caseId));
+      if (matches.length === 1) {
+        artifact.caseId = matches[0].caseId;
+        artifact.testName = matches[0].name;
+        matches[0].evidence ||= { checks: [], artifacts: [] };
+        matches[0].evidence.artifacts.push(artifact);
+      }
+    }
+    artifacts.push(artifact);
   };
   if (runner.reportPath) include(inside(project, runner.reportPath), 'report');
   if (runner.screenshotsPath) include(inside(project, runner.screenshotsPath), 'screenshot');
+  return artifacts;
+}
+
+// Evidence is written by the tests during this run, then copied into the run snapshot.
+// A case ID alone is accepted only when it identifies exactly one reported test.
+export function collectEvidence(project, runDir, runner, tests, startedAtMs) {
+  if (!runner.evidencePath) return [];
+  const source = inside(project, runner.evidencePath);
+  if (!fs.existsSync(source) || fs.lstatSync(source).isSymbolicLink() || !isWithinRealProject(project, source)) return [];
+  const files = fs.statSync(source).isDirectory()
+    ? fs.readdirSync(source).filter(name => name.endsWith('.json')).slice(0, 150).map(name => path.join(source, name))
+    : [source];
+  const artifacts = [];
+  const fresh = file => isFreshFile(project, file, startedAtMs);
+  for (const file of files) {
+    if (!fresh(file) || fs.statSync(file).size > 1024 * 1024) continue;
+    let manifest;
+    try { manifest = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { continue; }
+    const entries = Array.isArray(manifest?.tests) ? manifest.tests : [manifest];
+    if (manifest?.schemaVersion !== 1) continue;
+    for (const entry of entries.slice(0, 150)) {
+      if (!entry || typeof entry !== 'object' || (!entry.caseId && !entry.testName)) continue;
+      const matches = tests.filter(test => (!entry.caseId || test.caseId === entry.caseId) && (!entry.testName || test.name === entry.testName));
+      if (matches.length !== 1) continue;
+      const test = matches[0];
+      test.evidence ||= { checks: [], artifacts: [] };
+      for (const check of (Array.isArray(entry.checks) ? entry.checks : []).slice(0, 20)) {
+        if (typeof check?.expected !== 'string' || typeof check?.actual !== 'string') continue;
+        test.evidence.checks.push({ expected: check.expected.slice(0, 1000), actual: check.actual.slice(0, 1000) });
+      }
+      for (const attachment of (Array.isArray(entry.attachments) ? entry.attachments : []).slice(0, 20)) {
+        if (!['screenshot', 'video', 'trace', 'log'].includes(attachment?.kind) || typeof attachment.path !== 'string') continue;
+        let attachmentFile;
+        try { attachmentFile = inside(project, attachment.path); } catch { continue; }
+        if (!fresh(attachmentFile) || fs.statSync(attachmentFile).size > 50 * 1024 * 1024) continue;
+        const ext = path.extname(attachmentFile).toLowerCase();
+        const allowed = { screenshot: ['.png', '.jpg', '.jpeg', '.webp'], video: ['.mp4', '.webm'], trace: ['.zip'], log: ['.log', '.txt'] };
+        if (!allowed[attachment.kind].includes(ext)) continue;
+        const destination = path.join(runDir, 'artifacts', `evidence-${String(tests.indexOf(test) + 1).padStart(3, '0')}-${String(artifacts.length + 1).padStart(3, '0')}${ext}`);
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.copyFileSync(attachmentFile, destination);
+        const artifact = { kind: attachment.kind, path: path.relative(project, destination).split(path.sep).join('/'), label: path.basename(attachmentFile), caseId: test.caseId, testName: test.name };
+        artifacts.push(artifact);
+        test.evidence.artifacts.push(artifact);
+      }
+    }
+  }
   return artifacts;
 }
 

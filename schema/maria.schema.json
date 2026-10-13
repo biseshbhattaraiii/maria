@@ -93,7 +93,23 @@
         "format": { "enum": ["playwright-json", "jest-json", "junit", "none"] },
         "reportPath": { "type": "string" },
         "coveragePath": { "type": "string" },
-        "screenshotsPath": { "type": "string" }
+        "screenshotsPath": { "type": "string" },
+        "evidencePath": { "type": "string", "description": "Optional path to a JSON evidence manifest or directory of JSON manifests written by tests during the run" }
+      }
+    },
+    "evidenceManifest": {
+      "type": "object", "required": ["schemaVersion", "tests"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "tests": { "type": "array", "items": { "$ref": "#/$defs/testEvidence" } }
+      }
+    },
+    "testEvidence": {
+      "type": "object", "anyOf": [{ "required": ["caseId"] }, { "required": ["testName"] }],
+      "properties": {
+        "caseId": { "type": "string" }, "testName": { "type": "string" },
+        "checks": { "type": "array", "items": { "type": "object", "required": ["expected", "actual"], "properties": { "expected": { "type": "string" }, "actual": { "type": "string" } } } },
+        "attachments": { "type": "array", "items": { "type": "object", "required": ["kind", "path"], "properties": { "kind": { "enum": ["screenshot", "video", "trace", "log"] }, "path": { "type": "string", "description": "Project-relative file created by this test run" } } } }
       }
     },
     "run": {
@@ -107,8 +123,8 @@
         "finishedAt": { "type": ["string", "null"], "format": "date-time" },
         "status": { "enum": ["running", "passed", "failed", "incomplete"] },
         "agents": { "type": "array", "items": { "type": "object", "required": ["phase", "name", "status"], "properties": { "phase": { "type": "string" }, "name": { "type": "string" }, "status": { "type": "string" }, "log": { "type": "string" } } } },
-        "tests": { "type": "array", "items": { "type": "object", "required": ["name", "status"], "properties": { "name": { "type": "string" }, "status": { "enum": ["passed", "failed", "skipped"] }, "durationMs": { "type": "number" }, "error": { "type": "string" }, "caseId": { "type": "string" }, "file": { "type": "string" } } } },
-        "artifacts": { "type": "array", "items": { "type": "object", "required": ["kind", "path"], "properties": { "kind": { "enum": ["screenshot", "video", "trace", "log", "report"] }, "path": { "type": "string" }, "testName": { "type": "string" } } } },
+        "tests": { "type": "array", "items": { "type": "object", "required": ["name", "status"], "properties": { "name": { "type": "string" }, "status": { "enum": ["passed", "failed", "skipped"] }, "durationMs": { "type": "number" }, "error": { "type": "string" }, "caseId": { "type": "string" }, "file": { "type": "string" }, "evidence": { "type": "object", "properties": { "checks": { "type": "array", "items": { "type": "object", "required": ["expected", "actual"], "properties": { "expected": { "type": "string" }, "actual": { "type": "string" } } } }, "artifacts": { "type": "array", "items": { "type": "object" } } } } } } },
+        "artifacts": { "type": "array", "items": { "type": "object", "required": ["kind", "path"], "properties": { "kind": { "enum": ["screenshot", "video", "trace", "log", "report"] }, "path": { "type": "string" }, "label": { "type": "string" }, "caseId": { "type": "string" }, "testName": { "type": "string" } } } },
         "coverage": { "type": "object", "properties": { "lines": { "type": ["number", "null"] }, "branches": { "type": ["number", "null"] }, "functions": { "type": ["number", "null"] }, "rules": { "type": ["number", "null"] }, "cases": { "type": ["number", "null"] } } }
       }
     }

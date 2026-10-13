@@ -18,7 +18,7 @@ export function detectRunner(project) {
   const pkg = readJson(path.join(project, 'package.json'), {});
   const scripts = pkg.scripts || {};
   const command = scripts['test:e2e'] ? 'npm run test:e2e' : scripts['test:ui'] ? 'npm run test:ui' : '';
-  return { schemaVersion: 1, command, format: 'none', reportPath: '', coveragePath: '', screenshotsPath: '' };
+  return { schemaVersion: 1, command, format: 'none', reportPath: '', coveragePath: '', screenshotsPath: '', evidencePath: '' };
 }
 
 export function initialize(project) {

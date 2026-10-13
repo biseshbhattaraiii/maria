@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { agentPrompt, runAgent, selectAgents } from './agents.js';
 import { configuredProject, dataDir, inside, now, readJson, writeJson } from './files.js';
-import { caseCoverage, collectArtifacts, parseLcov, parseReport, readProjectData } from './results.js';
+import { caseCoverage, collectArtifacts, collectEvidence, parseLcov, parseReport, readProjectData } from './results.js';
 import { validateContext } from './validate.js';
 
 export function listRuns(project) {
@@ -112,11 +112,26 @@ export async function runWorkflow(projectInput, options = {}, onUpdate = () => {
     record.coverage = { ...record.coverage, ...caseCoverage(product, cases) };
     if (!runner.command) throw new Error('No test command configured in .maria/runner.json');
     const logFile = path.join(runDir, 'test.log');
+    const testStartedAtMs = Date.now();
     const result = await executeCommand(runner.command, project, logFile, options.timeoutMs);
     record.artifacts.push({ kind: 'log', path: path.relative(project, logFile) });
-    if (runner.reportPath) record.tests = parseReport(runner.format, inside(project, runner.reportPath));
-    if (runner.coveragePath) record.coverage = { ...record.coverage, ...parseLcov(inside(project, runner.coveragePath)) };
-    record.artifacts.push(...collectArtifacts(project, runDir, runner));
+    if (runner.reportPath) {
+      const reportFile = inside(project, runner.reportPath);
+      if (fs.existsSync(reportFile) && fs.statSync(reportFile).mtimeMs >= testStartedAtMs - 1000) record.tests = parseReport(runner.format, reportFile);
+    }
+    for (const test of record.tests) {
+      if (test.caseId) continue;
+      const matches = (cases.cases || []).filter(item => item.automation?.testName === test.name);
+      if (matches.length === 1) test.caseId = matches[0].id;
+    }
+    if (runner.coveragePath) {
+      const coverageFile = inside(project, runner.coveragePath);
+      if (fs.existsSync(coverageFile) && fs.statSync(coverageFile).mtimeMs >= testStartedAtMs - 1000) {
+        record.coverage = { ...record.coverage, ...parseLcov(coverageFile) };
+      }
+    }
+    record.artifacts.push(...collectArtifacts(project, runDir, runner, record.tests, testStartedAtMs));
+    record.artifacts.push(...collectEvidence(project, runDir, runner, record.tests, testStartedAtMs));
     record.commandExitCode = result.code;
     if (result.timedOut) throw new Error('Test command timed out');
     if (!record.tests.length) {

@@ -79,7 +79,7 @@ async function handler(req, res) {
       return send(res, 404, { error: 'Unknown endpoint' });
     }
     if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
-    if (url.pathname === '/api/meta') return send(res, 200, { agents: availableAgents(), home: os.homedir(), version: '0.1.4' });
+    if (url.pathname === '/api/meta') return send(res, 200, { agents: availableAgents(), home: os.homedir(), version: '0.1.5' });
     if (url.pathname === '/api/projects') return send(res, 200, projectCatalog().projects.map(project => ({ path: project, exists: fs.existsSync(path.join(project, '.maria', 'project.json')) })));
     if (url.pathname === '/api/browse') return send(res, 200, browse(url.searchParams.get('path')));
     if (url.pathname === '/api/project') {

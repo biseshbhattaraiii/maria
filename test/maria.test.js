@@ -25,7 +25,7 @@ test('agent handoff, Jest ingestion, screenshots, and coverage work together', a
   const originalCodex = process.env.MARIA_CODEX_BIN;
   const originalCodexModel = process.env.MARIA_CODEX_MODEL;
   try {
-    fs.writeFileSync(path.join(project, 'report.cjs'), `const fs = require('fs'); fs.mkdirSync('test-results',{recursive:true}); fs.writeFileSync('test-results/results.json',JSON.stringify({testResults:[{name:'tests/login.test.js',assertionResults:[{fullName:'[case-login-01] accepts a valid user',status:'passed',duration:12,failureMessages:[]}]}]})); fs.writeFileSync('test-results/screenshot.png',Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9X5HkAAAAASUVORK5CYII=','base64')); fs.mkdirSync('coverage',{recursive:true}); fs.writeFileSync('coverage/lcov.info','SF:login.js\\nLF:10\\nLH:8\\nBRF:4\\nBRH:3\\nFNF:2\\nFNH:2\\nend_of_record\\n');`);
+    fs.writeFileSync(path.join(project, 'report.cjs'), `const fs = require('fs'); fs.mkdirSync('test-results',{recursive:true}); fs.writeFileSync('test-results/results.json',JSON.stringify({testResults:[{name:'tests/login.test.js',assertionResults:[{fullName:'[case-login-01] accepts a valid user',status:'passed',duration:12,failureMessages:[]}]}]})); fs.writeFileSync('test-results/case-login-01.png',Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9X5HkAAAAASUVORK5CYII=','base64')); fs.writeFileSync('test-results/evidence.json',JSON.stringify({schemaVersion:1,tests:[{caseId:'case-login-01',checks:[{expected:'Login succeeds',actual:'Authenticated user shown'}],attachments:[{kind:'screenshot',path:'test-results/case-login-01.png'}]}]})); fs.mkdirSync('coverage',{recursive:true}); fs.writeFileSync('coverage/lcov.info','SF:login.js\\nLF:10\\nLH:8\\nBRF:4\\nBRH:3\\nFNF:2\\nFNH:2\\nend_of_record\\n');`);
     const fake = `#!/usr/bin/env node
 const fs=require('fs'); const path=require('path');
 if(process.argv.includes('--version')) { console.log('1.0'); process.exit(0); }
@@ -39,7 +39,7 @@ fs.writeFileSync(path.join(dir,'cases.json'),JSON.stringify({schemaVersion:1,cas
 fs.writeFileSync(path.join(dir,'handoff.json'),JSON.stringify({schemaVersion:1,phase:'discovery',agent:'claude',summary:'Login mapped',completed:['product'],next:['tests'],risks:[],updatedAt:new Date().toISOString()}));
 } else {
 const cases=JSON.parse(fs.readFileSync(path.join(dir,'cases.json'))); cases.cases[0].automation={status:'automated',file:'tests/login.test.js',testName:'[case-login-01] accepts a valid user'}; fs.mkdirSync('tests',{recursive:true}); fs.writeFileSync('tests/login.test.js','// test fixture'); fs.writeFileSync(path.join(dir,'cases.json'),JSON.stringify(cases));
-fs.writeFileSync(path.join(dir,'runner.json'),JSON.stringify({schemaVersion:1,command:'node report.cjs',format:'jest-json',reportPath:'test-results/results.json',coveragePath:'coverage/lcov.info',screenshotsPath:'test-results'}));
+fs.writeFileSync(path.join(dir,'runner.json'),JSON.stringify({schemaVersion:1,command:'node report.cjs',format:'jest-json',reportPath:'test-results/results.json',coveragePath:'coverage/lcov.info',screenshotsPath:'',evidencePath:'test-results/evidence.json'}));
 fs.writeFileSync(path.join(dir,'handoff.json'),JSON.stringify({schemaVersion:1,phase:'automation',agent:'codex',summary:'Test created',completed:['tests'],next:['run'],risks:[],updatedAt:new Date().toISOString()}));
 }
 });`;
@@ -56,7 +56,20 @@ fs.writeFileSync(path.join(dir,'handoff.json'),JSON.stringify({schemaVersion:1,p
     assert.equal(run.tests[0].caseId, 'case-login-01');
     assert.equal(run.coverage.lines, 80);
     assert.equal(run.coverage.rules, 100);
-    assert.ok(run.artifacts.some(item => item.kind === 'screenshot'));
+    assert.ok(run.artifacts.some(item => item.kind === 'screenshot' && item.caseId === 'case-login-01'));
+    assert.equal(run.tests[0].evidence.checks[0].actual, 'Authenticated user shown');
+    assert.equal(run.tests[0].evidence.artifacts[0].kind, 'screenshot');
+    const server = await serve({ port: 0, open: false });
+    try {
+      const base = `http://127.0.0.1:${server.address().port}`;
+      const saved = await fetch(`${base}/api/project?path=${encodeURIComponent(project)}`).then(response => response.json());
+      assert.equal(saved.runs[0].tests[0].evidence.checks[0].actual, 'Authenticated user shown');
+      const artifact = run.tests[0].evidence.artifacts[0];
+      const url = `${base}/api/artifact?project=${encodeURIComponent(project)}&run=${encodeURIComponent(run.id)}&path=${encodeURIComponent(artifact.path)}`;
+      const response = await fetch(url);
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-type'), /image\/png/);
+    } finally { server.close(); }
     assert.ok(run.artifacts.some(item => item.path.endsWith('discovery-claude.log')));
     assert.match(fs.readFileSync(path.join(project, run.agents[0].log), 'utf8'), /Exploring project/);
     assert.ok(run.artifacts.every(item => fs.existsSync(path.join(project, item.path))));
@@ -125,6 +138,32 @@ test('JUnit and Playwright reports are normalized', () => {
     const playwright = path.join(root, 'playwright.json');
     writeJson(playwright, { suites: [{ specs: [{ title: '[case-c] opens page', file: 'home.spec.ts', tests: [{ status: 'expected', results: [{ status: 'passed', duration: 20 }] }] }] }] });
     assert.equal(parseReport('playwright-json', playwright)[0].status, 'passed');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('evidence from a previous run is not attached to current results', async () => {
+  const { root, project } = workspace();
+  try {
+    const output = path.join(project, 'test-results');
+    fs.mkdirSync(output);
+    const screenshot = path.join(output, 'case-ready.png');
+    const evidence = path.join(output, 'evidence.json');
+    fs.writeFileSync(screenshot, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9X5HkAAAAASUVORK5CYII=', 'base64'));
+    writeJson(evidence, { schemaVersion: 1, tests: [{ caseId: 'case-ready', checks: [{ expected: 'Ready', actual: 'Ready' }], attachments: [{ kind: 'screenshot', path: 'test-results/case-ready.png' }] }] });
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(screenshot, old, old);
+    fs.utimesSync(evidence, old, old);
+    fs.writeFileSync(path.join(project, 'report.cjs'), `require('fs').writeFileSync('test-results/junit.xml','<testsuite><testcase name="[case-ready] works"/></testsuite>')`);
+    writeJson(path.join(project, '.maria', 'runner.json'), { schemaVersion: 1, command: 'node report.cjs', format: 'junit', reportPath: 'test-results/junit.xml', coveragePath: '', screenshotsPath: 'test-results', evidencePath: 'test-results/evidence.json' });
+    const stale = await runWorkflow(project, { from: 'tests' });
+    assert.equal(stale.status, 'passed', stale.summary);
+    assert.equal(stale.tests[0].evidence, undefined);
+    assert.ok(!stale.artifacts.some(item => item.kind === 'screenshot'));
+    fs.writeFileSync(path.join(project, 'report.cjs'), `const fs=require('fs'); fs.writeFileSync('test-results/junit.xml','<testsuite><testcase name="[case-ready] works"/></testsuite>'); fs.writeFileSync('test-results/case-ready.png',Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9X5HkAAAAASUVORK5CYII=','base64'));`);
+    const fresh = await runWorkflow(project, { from: 'tests' });
+    assert.equal(fresh.status, 'passed', fresh.summary);
+    assert.equal(fresh.tests[0].evidence.artifacts[0].caseId, 'case-ready');
+    assert.equal(fresh.tests[0].evidence.checks.length, 0);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

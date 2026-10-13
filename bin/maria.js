@@ -42,7 +42,7 @@ try {
     const project = configuredProject(positional[0] || process.cwd());
     const file = path.join(project, '.maria', 'runner.json');
     const runner = readJson(file, {});
-    for (const key of ['command', 'format', 'reportPath', 'coveragePath', 'screenshotsPath']) {
+    for (const key of ['command', 'format', 'reportPath', 'coveragePath', 'screenshotsPath', 'evidencePath']) {
       const value = option(`--${key}`);
       if (value !== null) runner[key] = value;
     }

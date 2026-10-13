@@ -52,13 +52,30 @@ The version 1 contract is in [schema/maria.schema.json](schema/maria.schema.json
 | `.maria/schema.json` | Local copy of Maria's versioned JSON Schema for both agents |
 | `.maria/product.json` | Product summary, features, source-backed rules, open questions |
 | `.maria/cases.json` | Test cases, linked rule IDs, automation status and test paths |
-| `.maria/runner.json` | Test command and paths for machine-readable results, coverage, screenshots |
+| `.maria/runner.json` | Test command and paths for machine-readable results, coverage, screenshots, case evidence |
 | `.maria/handoff.json` | Explicit context transfer between phases |
 | `.maria/runs/<id>/run.json` | Immutable-by-convention run summary with tests, coverage, artifacts, agent phases |
 
 Maria checks key references after each agent phase. Rule IDs must point to existing features, cases must point to existing rules, and automated cases must name a test file.
 
-The runner supports Playwright JSON, Jest JSON, and JUnit XML results. Code coverage is read from LCOV. Rule coverage is the percentage of documented rules linked to automated cases; case coverage is the percentage of cases marked automated. These are separate from code coverage. Screenshot files are copied into each run so later test runs cannot overwrite the evidence.
+The runner supports Playwright JSON, Jest JSON, and JUnit XML results. Code coverage is read from LCOV. Rule coverage is the percentage of documented rules linked to automated cases; case coverage is the percentage of cases marked automated. These are separate from code coverage. Screenshot files are copied into each run so later test runs cannot overwrite the evidence. A passed badge records the runner's result; it does not by itself prove that the assertions match the product rules.
+
+### Evidence for each test
+
+Set `evidencePath` in `.maria/runner.json` to a file such as `test-results/evidence.json`, or a directory of JSON files. The test command writes this file during each run:
+
+```json
+{
+  "schemaVersion": 1,
+  "tests": [{
+    "caseId": "case-login-01",
+    "checks": [{ "expected": "Dashboard heading is visible", "actual": "Dashboard" }],
+    "attachments": [{ "kind": "screenshot", "path": "test-results/case-login-01.png" }]
+  }]
+}
+```
+
+Maria matches evidence to a reported test by stable `caseId` or exact `testName`, accepts files created during that run, and stores copies under `.maria/runs/<id>/artifacts/`. Screenshots whose paths contain a case ID are also linked automatically when `screenshotsPath` is configured. The **Test cases** and **Test runs** views show linked checks and attachments, and say when no case-specific evidence was captured. UI tests should capture a screenshot at a meaningful assertion; unit tests should record the observed value behind their assertion. A screenshot is supporting evidence, not a substitute for an assertion.
 
 Configure an existing runner without agents:
 
@@ -66,7 +83,8 @@ Configure an existing runner without agents:
 maria config --command "npm run test:e2e" --format playwright-json \
   --reportPath test-results/results.json \
   --coveragePath coverage/lcov.info \
-  --screenshotsPath test-results
+  --screenshotsPath test-results \
+  --evidencePath test-results/evidence.json
 maria run --agent none
 ```
 
